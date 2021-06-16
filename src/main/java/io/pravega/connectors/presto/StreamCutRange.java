@@ -16,6 +16,8 @@
 
 package io.pravega.connectors.presto;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.pravega.client.stream.StreamCut;
 
 import java.io.Serializable;
@@ -25,7 +27,7 @@ import static com.google.common.base.MoreObjects.toStringHelper;
 public class StreamCutRange
         implements Serializable
 {
-    public static final StreamCutRange NULL_PAIR = new StreamCutRange(null, null);
+    public static final StreamCutRange NULL_PAIR = new StreamCutRange((StreamCut) null, null);
 
     private final StreamCut start;
 
@@ -35,6 +37,30 @@ public class StreamCutRange
     {
         this.start = start;
         this.end = end;
+    }
+
+    @JsonCreator
+    public StreamCutRange(@JsonProperty("base64Start") String base64Start,
+                          @JsonProperty("base64End") String base64End)
+    {
+        this.start = base64Start == null || base64Start.isEmpty()
+                ? StreamCut.UNBOUNDED
+                : StreamCut.from(base64Start);
+        this.end = base64End == null || base64End.isEmpty()
+                ? StreamCut.UNBOUNDED
+                : StreamCut.from(base64End);
+    }
+
+    @JsonProperty
+    public String getBase64Start()
+    {
+        return start.asText();
+    }
+
+    @JsonProperty
+    public String getBase64End()
+    {
+        return end.asText();
     }
 
     public StreamCut getStart()

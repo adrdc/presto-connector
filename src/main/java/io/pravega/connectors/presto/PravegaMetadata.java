@@ -110,6 +110,7 @@ public class PravegaMetadata
                 table.getObjectName(),
                 table.getObjectType(),
                 table.getObjectArgs(),
+                table.getStreamCuts(),
                 extractSchema(table),
                 groupId(schemaTableName.getSchemaName(), table.getObjectName()));
     }

@@ -20,6 +20,7 @@ import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.SchemaTableName;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.pravega.client.stream.StreamCut;
 
 import java.util.List;
 import java.util.Objects;
@@ -58,6 +59,8 @@ public final class PravegaTableHandle
 
     private final Optional<List<String>> objectArgs;
 
+    private final Optional<List<StreamCutRange>> streamCuts;
+
     private final List<PravegaObjectSchema> schema;
 
     private final String schemaRegistryGroupId;
@@ -70,6 +73,7 @@ public final class PravegaTableHandle
             @JsonProperty("objectName") String objectName,
             @JsonProperty("objectType") ObjectType objectType,
             @JsonProperty("objectArgs") Optional<List<String>> objectArgs,
+            @JsonProperty("streamCuts") Optional<List<StreamCutRange>> streamCuts,
             @JsonProperty("schema") List<PravegaObjectSchema> schema,
             @JsonProperty("schemaRegistryGroupId") String schemaRegistryGroupId)
     {
@@ -79,6 +83,7 @@ public final class PravegaTableHandle
         this.objectName = requireNonNull(objectName, "objectName is null");
         this.objectType = requireNonNull(objectType, "objectType is null");
         this.objectArgs = requireNonNull(objectArgs, "objectArgs is null");
+        this.streamCuts = requireNonNull(streamCuts, "streamCuts is null");
         this.schema = requireNonNull(schema, "schema is null");
         this.schemaRegistryGroupId = requireNonNull(schemaRegistryGroupId, "schemaRegistryGroupId is null");
     }
@@ -120,6 +125,12 @@ public final class PravegaTableHandle
     }
 
     @JsonProperty
+    public Optional<List<StreamCutRange>> getStreamCuts()
+    {
+        return streamCuts;
+    }
+
+    @JsonProperty
     public List<PravegaObjectSchema> getSchema()
     {
         return schema;
@@ -139,7 +150,7 @@ public final class PravegaTableHandle
     @Override
     public int hashCode()
     {
-        return Objects.hash(connectorId, schemaName, tableName, objectName, objectType, schema);
+        return Objects.hash(connectorId, schemaName, tableName, objectName, objectType, schema, objectArgs, streamCuts);
     }
 
     @Override
@@ -158,6 +169,8 @@ public final class PravegaTableHandle
                 && Objects.equals(this.tableName, other.tableName)
                 && Objects.equals(this.objectName, other.objectName)
                 && Objects.equals(this.objectType, other.objectType)
+                && Objects.equals(this.objectArgs, other.objectArgs)
+                && Objects.equals(this.streamCuts, other.streamCuts)
                 && Objects.equals(this.schema, other.schema);
     }
 
@@ -170,6 +183,8 @@ public final class PravegaTableHandle
                 .add("tableName", tableName)
                 .add("objectName", objectName)
                 .add("objectType", objectType)
+                .add("objectArgs", objectArgs)
+                .add("streamCuts", streamCuts)
                 .add("schema", schema)
                 .toString();
     }

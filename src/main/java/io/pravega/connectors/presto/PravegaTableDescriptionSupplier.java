@@ -236,6 +236,7 @@ public class PravegaTableDescriptionSupplier
             // kv this is list of key family (defined in local schema file)
             // for multi source stream this is list of composite streams (empty here, to be filled in later)
             Optional<List<String>> objectArgs = table.getObjectArgs();
+            Optional<List<StreamCutRange>> streamCutRanges = table.getStreamCuts();
 
             // field definitions can come from 1 of 4 places
             // (1) defined in local .json schema ("event/fields")
@@ -275,6 +276,10 @@ public class PravegaTableDescriptionSupplier
             }
 
             if (multiSourceStream(table)) {
+                if (streamCutRanges.isPresent()) {
+                    throw new IllegalArgumentException("cannot use static stream cut list with multiple streams");
+                }
+
                 // stream name will be some regex.
                 // find all the possible source streams.
                 Pattern pattern = Pattern.compile(table.getObjectName());
@@ -316,6 +321,7 @@ public class PravegaTableDescriptionSupplier
                     table.getObjectName(),
                     Optional.of(table.getObjectType()),
                     objectArgs,
+                    streamCutRanges,
                     fieldGroups);
 
             tableCache.put(pravegaTableName, Optional.of(table));
@@ -330,6 +336,7 @@ public class PravegaTableDescriptionSupplier
                 temp_tableNameToStreamName(schemaTableName.getTableName()),
                 Optional.of(ObjectType.STREAM),
                 Optional.empty() /* args */,
+                Optional.empty() /* stream cuts */,
                 fieldGroups);
         tableCache.put(pravegaTableName, Optional.of(table));
         return table;

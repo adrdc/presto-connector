@@ -22,80 +22,131 @@ import io.pravega.client.stream.StreamCut;
 import io.pravega.client.stream.impl.ByteBufferSerializer;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 
 import static io.pravega.connectors.presto.util.PravegaNameUtils.streamCutName;
 
 public class StreamCutSupplier
         implements AutoCloseable
 {
-    private PravegaSegmentManager segmentManager;
-
-    private Iterator<SegmentRange> rangeIterator;
-
-    private SegmentIterator<ByteBuffer> segmentIterator;
-
-    private StreamCut previous;
-
-    private boolean empty;
-
-    public StreamCutSupplier(PravegaSegmentManager segmentManager, String scope, String stream)
+    interface SCSupplier
     {
-        if (segmentManager.streamExists(scope, streamCutName(stream))) {
-            // for now, read stream cuts from internal stream
-            // https://github.com/pravega/pravega-sql/issues/24
-            this.segmentManager = segmentManager;
-
-            this.rangeIterator = segmentManager.getSegments(scope, streamCutName(stream), null, null).getIterator();
-            // init fist stream cut
-            this.previous = nextStreamCut();
-        }
-
-        if (this.previous == null) {
-            // either stream doesn't exist or no stream cuts logged
-            this.empty = true;
-        }
+        StreamCutRange get();
     }
 
-    private StreamCut nextStreamCut()
+    class StreamBasedSupplier implements SCSupplier
     {
-        do {
-            if (segmentIterator != null && segmentIterator.hasNext()) {
-                return StreamCut.fromBytes(segmentIterator.next());
+        private PravegaSegmentManager segmentManager;
+
+        private Iterator<SegmentRange> rangeIterator;
+
+        private SegmentIterator<ByteBuffer> segmentIterator;
+
+        private StreamCut previous;
+
+        private boolean empty;
+
+        public StreamBasedSupplier(PravegaSegmentManager segmentManager, String scope, String stream)
+        {
+            if (segmentManager.streamExists(scope, streamCutName(stream))) {
+                // for now, read stream cuts from internal stream
+                // https://github.com/pravega/pravega-sql/issues/24
+                this.segmentManager = segmentManager;
+
+                this.rangeIterator = segmentManager.getSegments(scope, streamCutName(stream), null, null).getIterator();
+                // init fist stream cut
+                this.previous = nextStreamCut();
             }
 
-            if (!rangeIterator.hasNext()) {
+            if (this.previous == null) {
+                // either stream doesn't exist or no stream cuts logged
+                this.empty = true;
+            }
+        }
+
+        private StreamCut nextStreamCut()
+        {
+            do {
+                if (segmentIterator != null && segmentIterator.hasNext()) {
+                    return StreamCut.fromBytes(segmentIterator.next());
+                }
+
+                if (!rangeIterator.hasNext()) {
+                    return null;
+                }
+
+                segmentIterator = segmentManager.getSegmentIterator(rangeIterator.next(),
+                        new ByteBufferSerializer());
+            } while (true);
+        }
+
+        private StreamCutRange next()
+        {
+            if (previous == null) {
                 return null;
             }
 
-            segmentIterator = segmentManager.getSegmentIterator(rangeIterator.next(),
-                    new ByteBufferSerializer());
-        } while (true);
-    }
+            StreamCut start = previous;
+            StreamCut end = nextStreamCut();
+            previous = end;
 
-    private StreamCutRange next()
-    {
-        if (previous == null) {
-            return null;
+            // looking for explicitly defined start+end stream cuts
+            // so we return null when we have no end (vs. start->UNBOUNDED)
+            return previous == null ? null : new StreamCutRange(start, end);
         }
 
-        StreamCut start = previous;
-        StreamCut end = nextStreamCut();
-        previous = end;
+        public StreamCutRange get()
+        {
+            if (empty) {
+                StreamCutRange range = StreamCutRange.NULL_PAIR;
+                empty = false;
+                return range;
+            }
+            return next();
+        }
+    }
 
-        // looking for explicitly defined start+end stream cuts
-        // so we return null when we have no end (vs. start->UNBOUNDED)
-        return previous == null ? null : new StreamCutRange(start, end);
+    class StaticListSupplier implements SCSupplier
+    {
+        boolean empty;
+        final Iterator<StreamCutRange> iterator;
+
+        public StaticListSupplier(List<StreamCutRange> rangeList)
+        {
+            iterator = rangeList.iterator();
+            empty = !iterator.hasNext();
+        }
+
+        @Override
+        public StreamCutRange get() {
+            // if no ranges provided, it is empty list
+            // return 'null pair' which signifies head->tail stream cut
+            if (empty) {
+                StreamCutRange range = StreamCutRange.NULL_PAIR;
+                empty = false;
+                return range;
+            }
+            return iterator.hasNext() ? iterator.next() : null;
+        }
+    }
+
+    private final SCSupplier delegate;
+
+    public StreamCutSupplier(PravegaSegmentManager segmentManager, PravegaTableHandle pravegaTableHandle, String stream)
+    {
+        if (pravegaTableHandle.getStreamCuts().isPresent()) {
+            delegate = new StaticListSupplier(pravegaTableHandle.getStreamCuts().orElse(new ArrayList<>()));
+        }
+        else {
+            delegate = new StreamBasedSupplier(segmentManager, pravegaTableHandle.getSchemaName(), stream);
+        }
     }
 
     public StreamCutRange get()
     {
-        if (empty) {
-            StreamCutRange range = StreamCutRange.NULL_PAIR;
-            empty = false;
-            return range;
-        }
-        return next();
+        return delegate.get();
     }
 
     @Override

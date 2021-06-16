@@ -147,7 +147,7 @@ public class PravegaSplitManager
         ReaderType readerType = readerType(properties);
 
         sourceStreams.forEach(stream -> {
-            StreamCutSupplier streamCutSupplier = new StreamCutSupplier(streamReaderManager, pravegaTableHandle.getSchemaName(), stream);
+            StreamCutSupplier streamCutSupplier = new StreamCutSupplier(streamReaderManager, pravegaTableHandle, stream);
 
             Supplier<PravegaSplit> splitSupplier;
             log.info("get split supplier for " + readerType);

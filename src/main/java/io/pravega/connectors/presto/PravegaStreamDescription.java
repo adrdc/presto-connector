@@ -37,6 +37,7 @@ public class PravegaStreamDescription
     private final String objectName;
     private final ObjectType objectType;
     private final Optional<List<String>> objectArgs;
+    private final Optional<List<StreamCutRange>> streamCuts;
     private final Optional<List<PravegaStreamFieldGroup>> event;
 
     @JsonCreator
@@ -46,6 +47,7 @@ public class PravegaStreamDescription
             @JsonProperty("objectName") String objectName,
             @JsonProperty("objectType") Optional<ObjectType> objectType,
             @JsonProperty("objectArgs") Optional<List<String>> objectArgs,
+            @JsonProperty("streamCuts") Optional<List<StreamCutRange>> streamCuts,
             @JsonProperty("event") Optional<List<PravegaStreamFieldGroup>> event)
     {
         checkArgument(!isNullOrEmpty(tableName), "tableName is null or is empty");
@@ -54,6 +56,7 @@ public class PravegaStreamDescription
         this.objectType = objectType.orElse(ObjectType.STREAM);
         this.objectArgs = requireNonNull(objectArgs, "objectArgs is null");
         this.schemaName = requireNonNull(schemaName, "schemaName is null");
+        this.streamCuts = requireNonNull(streamCuts, "streamCuts is null");
         this.event = requireNonNull(event, "message is null");
     }
 
@@ -64,6 +67,7 @@ public class PravegaStreamDescription
         this.objectName = streamDescription.objectName;
         this.objectType = streamDescription.objectType;
         this.objectArgs = streamDescription.objectArgs;
+        this.streamCuts = streamDescription.streamCuts;
         this.event = Optional.of(event);
     }
 
@@ -98,6 +102,12 @@ public class PravegaStreamDescription
     }
 
     @JsonProperty
+    public Optional<List<StreamCutRange>> getStreamCuts()
+    {
+        return streamCuts;
+    }
+
+    @JsonProperty
     public Optional<List<PravegaStreamFieldGroup>> getEvent()
     {
         return event;
@@ -112,6 +122,7 @@ public class PravegaStreamDescription
                 .add("objectName", objectName)
                 .add("objectType", objectType)
                 .add("objectArgs", objectArgs)
+                .add("streamCuts", streamCuts)
                 .add("event", event)
                 .toString();
     }
