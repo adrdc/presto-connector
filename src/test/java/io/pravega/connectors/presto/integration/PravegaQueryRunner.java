@@ -137,7 +137,7 @@ public final class PravegaQueryRunner
             schemaRegistries.add(kv);
         }
 
-        return new PravegaTableDescriptionSupplier(new CompositeSchemaRegistry(schemaSuppliers, schemaRegistries));
+        return new PravegaTableDescriptionSupplier(new CompositeSchemaRegistry(schemaSuppliers, schemaRegistries, null));
     }
 
     public static Session createSession()

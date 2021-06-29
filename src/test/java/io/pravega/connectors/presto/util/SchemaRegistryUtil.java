@@ -18,6 +18,7 @@ package io.pravega.connectors.presto.util;
 import com.facebook.presto.spi.SchemaTableName;
 import com.google.common.collect.ImmutableMap;
 import io.pravega.client.admin.StreamManager;
+import io.pravega.connectors.presto.PravegaConnectorConfig;
 import io.pravega.connectors.presto.schemamanagement.CompositeSchemaRegistry;
 import io.pravega.connectors.presto.schemamanagement.LocalSchemaRegistry;
 import io.pravega.connectors.presto.schemamanagement.PravegaSchemaRegistry;
@@ -57,6 +58,11 @@ public class SchemaRegistryUtil
 
     public CompositeSchemaRegistry getSchemaRegistry()
     {
+        return getSchemaRegistry(null);
+    }
+
+    public CompositeSchemaRegistry getSchemaRegistry(PravegaConnectorConfig config)
+    {
         List<SchemaSupplier> schemaSuppliers = new ArrayList<>();
         List<SchemaRegistry> schemaRegistries = new ArrayList<>();
 
@@ -68,7 +74,7 @@ public class SchemaRegistryUtil
         schemaSuppliers.add(pravegaSchemaRegistry);
         schemaRegistries.add(pravegaSchemaRegistry);
 
-        return new CompositeSchemaRegistry(schemaSuppliers, schemaRegistries);
+        return new CompositeSchemaRegistry(schemaSuppliers, schemaRegistries, config);
     }
 
     public void addLocalSchema(String dir)

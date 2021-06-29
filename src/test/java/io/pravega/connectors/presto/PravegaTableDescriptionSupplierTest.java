@@ -20,6 +20,7 @@ import io.pravega.connectors.presto.util.SchemaRegistryUtil;
 import org.testng.annotations.Test;
 
 import java.util.List;
+import java.util.Optional;
 
 import static io.pravega.connectors.presto.util.TestSchemas.EMPLOYEE_AVSC;
 import static org.testng.Assert.assertEquals;
@@ -90,5 +91,56 @@ public class PravegaTableDescriptionSupplierTest
         List<String> components = table.getObjectArgs().get();
         assertEquals(components.size(), 2);
         assertEquals(components.stream().sorted().toArray(), new String[]{"stream1", "stream3"});
+    }
+
+    @Test
+    public void testLimitScopes()
+    {
+        SchemaRegistryUtil schemaRegistryUtil = new SchemaRegistryUtil();
+        schemaRegistryUtil.addLocalSchema(SCHEMA);
+        schemaRegistryUtil.addLocalSchema("tpch");
+
+        PravegaConnectorConfig config = new PravegaConnectorConfig();
+        PravegaTableDescriptionSupplier tableSupplier;
+        List<String> schemas;
+
+        tableSupplier = new PravegaTableDescriptionSupplier(schemaRegistryUtil.getSchemaRegistry(config));
+
+        schemas = tableSupplier.listSchemas();
+        assertEquals(schemas.size(), 2);
+        assertEquals(schemas.get(0), "tpch");
+        assertEquals(schemas.get(1), SCHEMA);
+        assertEquals(tableSupplier.listTables(Optional.of("tpch")).size(), 8);
+
+        config.setScopes("ut"); // only consider schemas/tables in "ut" scope
+        tableSupplier = new PravegaTableDescriptionSupplier(schemaRegistryUtil.getSchemaRegistry(config));
+
+        schemas = tableSupplier.listSchemas();
+        assertEquals(schemas.size(), 1);
+        assertEquals(schemas.get(0), SCHEMA);
+
+        boolean gotEx = false;
+        try {
+            tableSupplier.listTables(Optional.of("tpch"));
+        } catch (RuntimeException e) {
+            gotEx = e.getMessage().contains("does not exist");
+        }
+        assertTrue(gotEx);
+    }
+
+    @Test
+    public void testDuplicates()
+    {
+        // there are 2 local, and 1 in PSR has same name.  it should not be included
+        SchemaRegistryUtil schemaRegistryUtil = new SchemaRegistryUtil();
+        schemaRegistryUtil.addLocalSchema(SCHEMA);
+        schemaRegistryUtil.addSchema(SCHEMA);
+        schemaRegistryUtil.addTable(new SchemaTableName(SCHEMA, "multiexplicit"), EMPLOYEE_AVSC);
+
+        PravegaTableDescriptionSupplier tableSupplier
+                = new PravegaTableDescriptionSupplier(schemaRegistryUtil.getSchemaRegistry());
+        assertEquals(tableSupplier.listTables(Optional.of(SCHEMA)).size(), 2);
+        assertEquals(tableSupplier.listTables(Optional.of(SCHEMA)).get(0).getSchemaTableName().getTableName(), "multiexplicit");
+        assertEquals(tableSupplier.listTables(Optional.of(SCHEMA)).get(1).getSchemaTableName().getTableName(), "multiregex");
     }
 }

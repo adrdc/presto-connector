@@ -31,7 +31,7 @@ public class CompositeSchemaRegistry
 
     private final List<SchemaRegistry> schemaRegistries;
 
-    private Set<String> scopes = new HashSet<>();
+    private final Set<String> scopes = new HashSet<>();
 
     public CompositeSchemaRegistry(PravegaConnectorConfig config, JsonCodec<PravegaStreamDescription> streamDescriptionCodec) {
         schemaSuppliers = new ArrayList<>();
@@ -63,16 +63,23 @@ public class CompositeSchemaRegistry
     }
 
     @VisibleForTesting
-    public CompositeSchemaRegistry(List<SchemaSupplier> schemaSuppliers, List<SchemaRegistry> schemaRegistries)
+    public CompositeSchemaRegistry(List<SchemaSupplier> schemaSuppliers, List<SchemaRegistry> schemaRegistries, PravegaConnectorConfig config)
     {
         this.schemaSuppliers = schemaSuppliers;
         this.schemaRegistries = schemaRegistries;
+
+        if (config != null) {
+            if (config.getScopes() != null) {
+                for (String scope : config.getScopes().split(",")) {
+                    scopes.add(scope.trim());
+                }
+            }
+        }
     }
 
     private void validatePrestoSchema(String schema)
     {
         if (!scopes.isEmpty() && !scopes.contains(schema)) {
-            // TODO: what is the actual exception to throw?
             throw new IllegalArgumentException("schema does not exist " + schema);
         }
     }

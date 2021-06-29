@@ -206,7 +206,11 @@ public class PravegaTableDescriptionSupplier {
 
         List<PravegaTableName> tableList = new ArrayList<>();
         for (String s : schemas) {
-            tableList.addAll(schemaCache.getIfPresent(s));
+            List<PravegaTableName> tables = schemaCache.getIfPresent(s);
+            if (tables == null) {
+                throw new RuntimeException("schema " + schema + " does not exist");
+            }
+            tableList.addAll(tables);
         }
         return tableList;
     }
