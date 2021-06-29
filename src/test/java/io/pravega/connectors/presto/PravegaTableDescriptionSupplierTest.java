@@ -46,14 +46,14 @@ public class PravegaTableDescriptionSupplierTest
         SchemaRegistryUtil schemaRegistryUtil = new SchemaRegistryUtil();
         schemaRegistryUtil.addLocalSchema(SCHEMA);
 
-        PravegaTableDescriptionSupplier tableSupplier =
-                new PravegaTableDescriptionSupplier(schemaRegistryUtil.getSchemaRegistry());
-
 
         schemaRegistryUtil.addSchema(SCHEMA);
         schemaRegistryUtil.addTable(new SchemaTableName(SCHEMA, "stream1"), EMPLOYEE_AVSC);
         schemaRegistryUtil.addTable(new SchemaTableName(SCHEMA, "stream2"), EMPLOYEE_AVSC);
         schemaRegistryUtil.addTable(new SchemaTableName(SCHEMA, "stream3"), EMPLOYEE_AVSC);
+
+        PravegaTableDescriptionSupplier tableSupplier =
+                new PravegaTableDescriptionSupplier(schemaRegistryUtil.getSchemaRegistry());
 
         PravegaStreamDescription table =
                 tableSupplier.getTable(new SchemaTableName(SCHEMA, "multiregex"));

@@ -22,16 +22,17 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import io.pravega.connectors.presto.schemamanagement.CompositeSchemaRegistry;
 
 import javax.inject.Inject;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -50,135 +51,184 @@ import static java.util.Objects.requireNonNull;
 // additionally a local stream schema could be a composite table.  this is called 'multi-source'.
 // stream name will be a regex.  it can match 1 or more source streams.  when this single table is
 // queried we will consider events from all source streams
-public class PravegaTableDescriptionSupplier
-{
+public class PravegaTableDescriptionSupplier {
     private static final Logger log = Logger.get(PravegaTableDescriptionSupplier.class);
 
     private final CompositeSchemaRegistry schemaRegistry;
 
-    private Cache<String, Object> schemaCache;
+    private final Cache<String, List<PravegaTableName>> schemaCache;
 
-    private Cache<PravegaTableName, Optional<PravegaStreamDescription>> tableCache;
+    private final LoadingCache<PravegaTableName, Optional<PravegaStreamDescription>> tableCache;
 
     // whether we have listed tables from this schema or not
     private final HashMap<String, Boolean> tableListMap = new HashMap<>();
 
-    private JsonCodec<PravegaStreamDescription> streamDescriptionCodec;
+    private final ExecutorService exec;
+
+    private final AtomicBoolean initialFetch = new AtomicBoolean();
 
     @Inject
     PravegaTableDescriptionSupplier(PravegaConnectorConfig pravegaConnectorConfig,
-                                    JsonCodec<PravegaStreamDescription> streamDescriptionCodec)
-    {
+                                    JsonCodec<PravegaStreamDescription> streamDescriptionCodec) {
         requireNonNull(pravegaConnectorConfig, "pravegaConfig is null");
-        this.streamDescriptionCodec = streamDescriptionCodec;
 
-        // there will be many successive calls to listSchemas + listTables in short time period
-        // do not reach out to pravega each time as it is unlikely things would have changed
-        // enhancement issue - can we determine if there are changes/removals and selectively update?
-        // https://github.com/pravega/presto-connector/issues/30
-        this.schemaCache = CacheBuilder.newBuilder()
-                .expireAfterWrite(pravegaConnectorConfig.getTableCacheExpireSecs(), TimeUnit.SECONDS)
-                .build();
+        // no expire time explicitly set in cache, they are listed periodically and will be overwritten
+        this.schemaCache = CacheBuilder.newBuilder().build();
 
+        // after expiration we will rebuild field definitions in case table schema changes
         this.tableCache = CacheBuilder.newBuilder()
                 .expireAfterWrite(pravegaConnectorConfig.getTableCacheExpireSecs(), TimeUnit.SECONDS)
-                .build();
+                .build(new CacheLoader<PravegaTableName, Optional<PravegaStreamDescription>>() {
+                    @Override
+                    public Optional<PravegaStreamDescription> load(PravegaTableName pravegaTableName) {
+                        PravegaStreamDescription streamDescription = loadTable(pravegaTableName.getSchemaTableName());
+                        if (streamDescription == null) {
+                            throw new RuntimeException("table " + pravegaTableName.getSchemaTableName().getSchemaName() + "." +
+                                    pravegaTableName.getSchemaTableName().getTableName() + " not found");
+                        }
+                        return Optional.of(streamDescription);
+                    }
+                });
 
         this.schemaRegistry = new CompositeSchemaRegistry(pravegaConnectorConfig, streamDescriptionCodec);
+
+        this.exec = Executors.newSingleThreadExecutor();
+        this.exec.submit(() -> {
+            long sleepMs = 2000; // small sleep until we have successful run, then will be bumped up
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    fillSchemaCache();
+
+                    if (!initialFetch.get()) {
+                        synchronized (initialFetch) {
+                            initialFetch.set(true);
+                            initialFetch.notifyAll();
+                        }
+                    }
+
+                    // we have a successful run, fall back to normal interval
+                    sleepMs = pravegaConnectorConfig.getTableCacheExpireSecs() * 1000L;
+                } finally {
+                    try {
+                        Thread.sleep(sleepMs);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        });
     }
 
     @VisibleForTesting
-    public PravegaTableDescriptionSupplier(CompositeSchemaRegistry schemaRegistry)
-    {
+    public PravegaTableDescriptionSupplier(CompositeSchemaRegistry schemaRegistry) {
+        this.exec = null;
         this.schemaRegistry = schemaRegistry;
 
         this.schemaCache = CacheBuilder.newBuilder().build();
-        this.tableCache = CacheBuilder.newBuilder().build();
+        this.tableCache = CacheBuilder.newBuilder().build(new CacheLoader<PravegaTableName, Optional<PravegaStreamDescription>>() {
+            @Override
+            public Optional<PravegaStreamDescription> load(PravegaTableName pravegaTableName) {
+                PravegaStreamDescription streamDescription = loadTable(pravegaTableName.getSchemaTableName());
+                return streamDescription == null ? Optional.empty() : Optional.of(streamDescription);
+            }
+        });
+
+        fillSchemaCache();
+
+        this.initialFetch.set(true);
+    }
+
+    private void fillSchemaCache()
+    {
+        log.info("refill table cache");
+        for (String schema : schemaRegistry.listSchemas()) {
+            List<PravegaTableName> finalTables = new ArrayList<>();
+
+            List<Pattern> compositeStreams = new ArrayList<>();
+
+            schemaRegistry.listTables(schema).forEach(table -> {
+                // we hide component streams (components of multi-source streams) from view
+                // multi source streams guaranteed to appear first, so compositeStreams will be complete
+                // before we actually get to a hidden (component) stream
+                boolean hidden =
+                        compositeStreams.stream().anyMatch(p -> p.matcher(table.getTableName()).matches());
+
+                finalTables.add(new PravegaTableName(schema, table.getTableName(), hidden));
+
+                if (multiSourceStream(table)) {
+                    // if component streams specified look for exact match when hiding
+                    if (table.getObjectArgs().isPresent()) {
+                        table.getObjectArgs().get().forEach(arg -> {
+                            compositeStreams.add(Pattern.compile("^" + arg + "$"));
+                        });
+                    } else {
+                        // regex, fuzzy match
+                        compositeStreams.add(Pattern.compile(table.getObjectName()));
+                    }
+                }
+            });
+
+            schemaCache.put(schema, finalTables);
+        }
+    }
+
+    private void waitInitialSchemaFetch()
+    {
+        if (initialFetch.get()) {
+            return;
+        }
+
+        try {
+            synchronized (initialFetch) {
+                while (!initialFetch.get()) {
+                    initialFetch.wait();
+                }
+            }
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
     }
 
     public List<String> listSchemas()
     {
-        // if any expired, retrieve list again from pravega
-        // they are inserted to cache at same time so will all be same state
-        final List<String> schemas = schemaCache.asMap().keySet().stream().collect(Collectors.toList());
-        if (schemas.isEmpty()) {
-            schemaRegistry.listSchemas().forEach(schema -> {
-                schemas.add(schema);
-                schemaCache.put(schema, new Object());
-            });
-        }
-        else {
-            log.debug("serving listSchemas() from cache");
-        }
-        return schemas;
+        waitInitialSchemaFetch();
+
+        return schemaCache.asMap().keySet().stream().collect(Collectors.toList());
     }
 
     public List<PravegaTableName> listTables(Optional<String> schema)
     {
+        waitInitialSchemaFetch();
+
         List<String> schemas = schema.map(Collections::singletonList).orElseGet(this::listSchemas);
 
         List<PravegaTableName> tableList = new ArrayList<>();
-
         for (String s : schemas) {
-            List<PravegaTableName> tableListForSchema =
-                    tableCache.asMap().keySet().stream()
-                            .filter(streamDesc -> streamDesc.getSchemaTableName().getSchemaName().startsWith(s))
-                            .collect(Collectors.toList());
-
-            if (tableListForSchema.isEmpty() || tableListMap.get(s) == null) {
-
-                List<Pattern> compositeStreams = new ArrayList<>();
-
-                schemaRegistry.listTables(s).forEach(table -> {
-
-                    // we hide component streams (components of multi-source streams) from view
-                    boolean hidden =
-                            compositeStreams.stream().anyMatch(p -> p.matcher(table.getTableName()).matches());
-
-                    PravegaTableName pravegaTableName = new PravegaTableName(s, table.getTableName(), hidden);
-
-                    // don't clobber existing entry
-                    if (tableCache.getIfPresent(pravegaTableName) == null ||
-                            !tableCache.getIfPresent(pravegaTableName).isPresent()) {
-                        tableCache.put(pravegaTableName, Optional.empty());
-                    }
-
-                    if (multiSourceStream(table)) {
-                        // if component streams specified look for exact match when hiding
-                        if (table.getObjectArgs().isPresent()) {
-                            table.getObjectArgs().get().forEach(arg -> {
-                                compositeStreams.add(Pattern.compile("^" + arg + "$"));
-                            });
-                        }
-                        else {
-                            // regex, fuzzy match
-                            compositeStreams.add(Pattern.compile(table.getObjectName()));
-                        }
-                    }
-                });
-                tableListMap.put(s, true); // we have now listed tables from the schema
-            }
-            else {
-                log.debug("serving listTables(%s) from cache", s);
-            }
-
-            tableList.addAll(tableCache.asMap().keySet().stream()
-                    .filter(pravegaStreamDescription ->
-                            pravegaStreamDescription.getSchemaTableName().getSchemaName().startsWith(s))
-                    .collect(Collectors.toList()));
+            tableList.addAll(schemaCache.getIfPresent(s));
         }
         return tableList;
     }
 
     public PravegaStreamDescription getTable(SchemaTableName schemaTableName)
     {
+        waitInitialSchemaFetch();
+
         PravegaTableName pravegaTableName = new PravegaTableName(schemaTableName);
-        Optional<PravegaStreamDescription> cachedTable = tableCache.getIfPresent(pravegaTableName);
+        Optional<PravegaStreamDescription> cachedTable = tableCache.getUnchecked(pravegaTableName);
         if (cachedTable != null && cachedTable.isPresent()) {
             log.debug("serving getTable(%s) from cache", schemaTableName);
             return cachedTable.get();
         }
+        else {
+            log.debug("could not retrieve definition for getTable(%s)", schemaTableName);
+            return null;
+        }
+    }
 
+    private PravegaStreamDescription loadTable(SchemaTableName schemaTableName)
+    {
         PravegaStreamDescription table = schemaRegistry.getTable(schemaTableName);
         if (table == null) {
             return null;
@@ -199,12 +249,10 @@ public class PravegaTableDescriptionSupplier
             }
 
             table = new PravegaStreamDescription(table, fieldGroups, objectArgs);
-        }
-        else if (!fieldsDefined(table)) {
+        } else if (!fieldsDefined(table)) {
             table = new PravegaStreamDescription(table, schemaRegistry.getSchema(schemaTableName));
         }
 
-        tableCache.put(pravegaTableName, Optional.of(table));
         return table;
     }
 

@@ -23,8 +23,7 @@ import javax.validation.constraints.NotNull;
 import java.io.File;
 import java.net.URI;
 
-public class PravegaConnectorConfig
-{
+public class PravegaConnectorConfig {
     /**
      * Pravega Controller URI
      */
@@ -38,7 +37,7 @@ public class PravegaConnectorConfig
     /**
      * how long to cache schema+table objects for before retrieving for pravega
      */
-    private int tableCacheExpireSecs = Integer.MAX_VALUE;
+    private int tableCacheExpireSecs = 360;
 
     /**
      * Whether internal columns are shown in table metadata or not. Default is no.
@@ -50,60 +49,68 @@ public class PravegaConnectorConfig
      */
     private File tableDescriptionDir = new File("etc/pravega/");
 
+    /**
+     * comma separated string of scopes.  Optional.  If present, only these scopes will be considered for schemas.
+     *
+     */
+    private String scopes;
 
     @NotNull
-    public URI getControllerURI()
-    {
+    public URI getControllerURI() {
         return this.controllerURI;
     }
 
     @NotNull
-    public URI getSchemaRegistryURI()
-    {
+    public URI getSchemaRegistryURI() {
         return this.schemaRegistryURI;
     }
 
     @NotNull
-    public File getTableDescriptionDir()
-    {
+    public File getTableDescriptionDir() {
         return tableDescriptionDir;
     }
 
-    @Config("pravega.table-description-dir")
-    public PravegaConnectorConfig setTableDescriptionDir(File tableDescriptionDir)
+    public String getScopes()
     {
+        return scopes;
+    }
+
+    @Config("pravega.table-description-dir")
+    public PravegaConnectorConfig setTableDescriptionDir(File tableDescriptionDir) {
         this.tableDescriptionDir = tableDescriptionDir;
         return this;
     }
 
-    public int getTableCacheExpireSecs()
-    {
+    public int getTableCacheExpireSecs() {
         return this.tableCacheExpireSecs;
     }
 
     @Config("pravega.controller")
-    public PravegaConnectorConfig setControllerURI(URI controllerURI)
-    {
+    public PravegaConnectorConfig setControllerURI(URI controllerURI) {
         this.controllerURI = controllerURI;
         return this;
     }
 
     @Config("pravega.schema-registry")
-    public PravegaConnectorConfig setSchemaRegistryURI(URI schemaRegistryURI)
-    {
+    public PravegaConnectorConfig setSchemaRegistryURI(URI schemaRegistryURI) {
         this.schemaRegistryURI = schemaRegistryURI;
         return this;
     }
 
-    public boolean isHideInternalColumns()
-    {
+    public boolean isHideInternalColumns() {
         return hideInternalColumns;
     }
 
     @Config("pravega.hide-internal-columns")
-    public PravegaConnectorConfig setHideInternalColumns(boolean hideInternalColumns)
-    {
+    public PravegaConnectorConfig setHideInternalColumns(boolean hideInternalColumns) {
         this.hideInternalColumns = hideInternalColumns;
+        return this;
+    }
+
+    @Config("pravega.scopes")
+    public PravegaConnectorConfig setScopes(String scopes)
+    {
+        this.scopes = scopes;
         return this;
     }
 }

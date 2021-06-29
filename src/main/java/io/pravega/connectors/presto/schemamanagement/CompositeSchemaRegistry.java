@@ -23,8 +23,7 @@ import io.pravega.connectors.presto.PravegaStreamDescription;
 import io.pravega.connectors.presto.PravegaStreamFieldGroup;
 import io.pravega.connectors.presto.PravegaTableHandle;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 public class CompositeSchemaRegistry
         implements SchemaSupplier, SchemaRegistry {
@@ -32,11 +31,20 @@ public class CompositeSchemaRegistry
 
     private final List<SchemaRegistry> schemaRegistries;
 
+    private Set<String> scopes = new HashSet<>();
+
     public CompositeSchemaRegistry(PravegaConnectorConfig config, JsonCodec<PravegaStreamDescription> streamDescriptionCodec) {
         schemaSuppliers = new ArrayList<>();
         schemaRegistries = new ArrayList<>();
 
+        if (config.getScopes() != null) {
+            for (String scope : config.getScopes().split(",")) {
+                scopes.add(scope.trim());
+            }
+        }
+
         // local will override, always add first
+        // if local is not first you may experience subtle issues (mostly related to multisource streams)
         if (config.getTableDescriptionDir() != null &&
                 config.getTableDescriptionDir().exists() &&
                 config.getTableDescriptionDir().isDirectory()) {
@@ -61,24 +69,51 @@ public class CompositeSchemaRegistry
         this.schemaRegistries = schemaRegistries;
     }
 
+    private void validatePrestoSchema(String schema)
+    {
+        if (!scopes.isEmpty() && !scopes.contains(schema)) {
+            // TODO: what is the actual exception to throw?
+            throw new IllegalArgumentException("schema does not exist " + schema);
+        }
+    }
+
     @Override
     public List<String> listSchemas()
     {
         final List<String> schemas = new ArrayList<>();
-        schemaSuppliers.forEach(p -> schemas.addAll(p.listSchemas()));
+        if (!scopes.isEmpty()) {
+            schemas.addAll(scopes);
+        }
+        else {
+            schemaSuppliers.forEach(p -> schemas.addAll(p.listSchemas()));
+        }
         return schemas;
     }
 
     @Override
     public List<PravegaTableHandle> listTables(String schema)
     {
+        validatePrestoSchema(schema);
+
+        Set<PravegaTableHandle> dedupeSet =
+                new TreeSet<>(Comparator.comparing(PravegaTableHandle::getTableName));
+
         final List<PravegaTableHandle> tables = new ArrayList<>();
-        schemaSuppliers.forEach(p -> tables.addAll(p.listTables(schema)));
+        schemaSuppliers.forEach(p -> {
+            p.listTables(schema).forEach(table -> {
+                if (dedupeSet.add(table)) {
+                    tables.add(table);
+                }
+            });
+        });
         return tables;
     }
 
     @Override
-    public List<PravegaStreamFieldGroup> getSchema(SchemaTableName schemaTableName) {
+    public List<PravegaStreamFieldGroup> getSchema(SchemaTableName schemaTableName)
+    {
+        validatePrestoSchema(schemaTableName.getSchemaName());
+
         for (SchemaRegistry schemaRegistry : schemaRegistries) {
             List<PravegaStreamFieldGroup> schema = schemaRegistry.getSchema(schemaTableName);
             if (schema != null) {
@@ -91,6 +126,8 @@ public class CompositeSchemaRegistry
     @Override
     public PravegaStreamDescription getTable(SchemaTableName schemaTableName)
     {
+        validatePrestoSchema(schemaTableName.getSchemaName());
+
         for (SchemaRegistry schemaRegistry : schemaRegistries) {
             PravegaStreamDescription streamDescription = schemaRegistry.getTable(schemaTableName);
             if (streamDescription != null) {

@@ -26,11 +26,11 @@ import io.pravega.connectors.presto.PravegaTableHandle;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import static io.pravega.connectors.presto.util.PravegaNameUtils.kvFieldMapping;
+import static io.pravega.connectors.presto.util.PravegaNameUtils.multiSourceStream;
 import static io.pravega.connectors.presto.util.PravegaStreamDescUtils.resolveAllSchemas;
 import static java.nio.file.Files.readAllBytes;
 
@@ -62,7 +62,15 @@ public class LocalSchemaRegistry
     @Override
     public List<PravegaTableHandle> listTables(String schema)
     {
-        final List<PravegaTableHandle> tables = new ArrayList<>();
+        // multi source streams must appear first in list
+        Set<PravegaTableHandle> tableSet = new TreeSet<>((t1, t2) -> {
+            boolean m1 = multiSourceStream(t1);
+            boolean m2 = multiSourceStream(t2);
+            if (m1 != m2) {
+                return m1 ? 1 : -1;
+            }
+            return t1.getTableName().compareTo(t2.getTableName());
+        });
 
         // file name format: {schema}.{table}.json
         localSchemaStream()
@@ -73,18 +81,19 @@ public class LocalSchemaRegistry
                 .map(file -> file.getName().split("\\.")[1])
                 .map(file -> getLocalTable(new SchemaTableName(schema, file)))
                 .forEach(table -> {
-                    tables.add(new PravegaTableHandle(table.getSchemaName().get(),
+                    tableSet.add(new PravegaTableHandle(table.getSchemaName().get(),
                             table.getTableName(),
                             table.getObjectName(),
                             table.getObjectType(),
                             table.getObjectArgs()));
                 });
 
-        return tables;
+        return new ArrayList<>(tableSet);
     }
 
     @Override
-    public List<PravegaStreamFieldGroup> getSchema(SchemaTableName schemaTableName) {
+    public List<PravegaStreamFieldGroup> getSchema(SchemaTableName schemaTableName)
+    {
         PravegaStreamDescription streamDescription = getLocalTable(schemaTableName);
         return streamDescription == null ? null : streamDescription.getEvent().orElse(null);
     }
